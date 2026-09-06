@@ -230,27 +230,52 @@ curl -s http://localhost:30000/v1/chat/completions \
 
 ### vLLM
 
-#### Deploy vLLM
+Spark-X2.5 uses the out-of-tree
+[`vllm-spark2_5-plugin`](https://github.com/XHToken/Spark-plugin). The generic
+vLLM image does not recognize `Spark2_5ForCausalLM` unless the plugin is
+installed in the same Python environment that launches vLLM.
 
-vLLM provides an official Docker image for NVIDIA GPU deployment:
+#### NVIDIA GPUs
+
+Build a small derived image that adds the released plugin without replacing the
+vLLM installation selected by the base image:
+
+```bash
+docker build -t spark-x2.5-vllm:0.1.0 - <<'DOCKERFILE'
+FROM vllm/vllm-openai:latest
+RUN python -m pip install --no-cache-dir --no-deps "vllm-spark2_5-plugin==0.1.0" \
+    && python -m pip install --no-cache-dir --upgrade "openai>=2.25.0"
+DOCKERFILE
+```
+
+Then start the OpenAI-compatible server:
 
 ```bash
 docker run --rm --gpus all \
   --ipc=host \
   -p 30000:30000 \
   -v "$MODEL_PATH:/models/Spark-X2.5-4B:ro" \
-  vllm/vllm-openai:latest \
-  --model /models/Spark-X2.5-4B \
+  spark-x2.5-vllm:0.1.0 \
+  /models/Spark-X2.5-4B \
   --port 30000 \
   --trust-remote-code \
   --served-model-name spark25 \
   --tensor-parallel-size 1 \
   --gpu-memory-utilization 0.7 \
   --enable-prefix-caching \
+  --enable-auto-tool-choice \
+  --tool-call-parser spark25 \
   --chat-template /models/Spark-X2.5-4B/chat_template.jinja
 ```
 
-For Ascend NPUs, choose an official image for the fastest setup.
+At startup, the log should contain `vllm-spark2_5-plugin: registered
+Spark2_5ForCausalLM`. If vLLM still reports that the model architecture is not
+supported, the plugin was installed into a different Python environment; see
+the [plugin troubleshooting guide](https://github.com/XHToken/Spark-plugin#the-model-architecture-is-unsupported).
+
+#### Ascend NPUs
+
+Choose an official image for the fastest setup.
 
 ##### Ascend A2:
 
@@ -338,15 +363,13 @@ docker run --rm \
     -it "$IMAGE" bash
 ```
 
-Install the Spark plugin inside the container:
+Install the released Spark plugin into the container's existing vLLM Python
+environment. `--no-deps` is important here: it prevents pip from replacing the
+Ascend vLLM build with another vLLM distribution.
 
 ```bash
-pip install uv
-uv venv ~/spark2_5
-source ~/spark2_5/bin/activate
-git clone https://github.com/XHToken/Spark-plugin.git
-cd ./Spark-plugin
-uv pip install .
+python -m pip install --no-cache-dir --no-deps "vllm-spark2_5-plugin==0.1.0"
+python -m pip install --no-cache-dir --upgrade "openai>=2.25.0"
 ```
 
 #### Server
